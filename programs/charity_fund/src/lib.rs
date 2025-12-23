@@ -41,7 +41,10 @@ pub mod charity_fund {
         );
 
         system_program::transfer(cpi_ctx, amount)?;
-        campaign.total_donated += amount;
+        campaign.total_donated = campaign
+            .total_donated
+            .checked_add(amount)
+            .ok_or(CustomError::ArithmeticOverflow)?;
 
         Ok(())
     }
@@ -79,9 +82,15 @@ pub mod charity_fund {
         require!(!proposal.executed, CustomError::ProposalAlreadyExecuted);
 
         if approve {
-            proposal.yes_votes += 1;
+            proposal.yes_votes = proposal
+                .yes_votes
+                .checked_add(1)
+                .ok_or(CustomError::ArithmeticOverflow)?;
         } else {
-            proposal.no_votes += 1;
+            proposal.no_votes = proposal
+                .no_votes
+                .checked_add(1)
+                .ok_or(CustomError::ArithmeticOverflow)?;
         }
 
         Ok(())
@@ -149,11 +158,8 @@ pub struct InitializeCampaign<'info> {
 
     /// CHECK: Treasury PDA chỉ giữ SOL
     #[account(
-        init,
-        payer = admin,
         seeds = [b"treasury", campaign.key().as_ref()],
-        bump,
-        space = 8
+        bump
     )]
     pub treasury: UncheckedAccount<'info>,
 
@@ -251,13 +257,17 @@ pub struct ExecuteProposal<'info> {
     #[account(mut)]
     pub recipient: UncheckedAccount<'info>,
 
+    /// Signer that authorizes execution (provided by the client)
+    pub executor: Signer<'info>,
+
     pub system_program: Program<'info, System>,
 }
 
-
+#[derive(InitSpace)]
 #[account]
 pub struct VoteAccount {}
 
+#[derive(InitSpace)]
 #[account]
 pub struct CampaignAccount {
     pub admin: Pubkey,
@@ -267,13 +277,13 @@ pub struct CampaignAccount {
 }
 
 impl CampaignAccount {
-    pub const LEN: usize =
-        32 + // admin
-        8 +  // target
-        8 +  // donated
-        1;   // active
+    pub const LEN: usize = 49; // 32 + admin, 8 + target, 8 + donated, 1 active
 }
-
+        // 32 + // admin
+        // 8 +  // target
+        // 8 +  // donated
+        // 1;   // active
+#[derive(InitSpace)]
 #[account]
 pub struct ProposalAccount {
     pub campaign: Pubkey,
@@ -287,17 +297,16 @@ pub struct ProposalAccount {
 }
 
 impl ProposalAccount {
-    pub const LEN: usize =
-        32 + // campaign
-        32 + // proposer
-        32 + // recipient_wallet
-        32 + // identity hash
-        8 +  // amount
-        8 +  // yes
-        8 +  // no
-        1;   // executed
+    pub const LEN: usize = 153; // 32*4 + 8*3 + 1
 }
-
+        // 32 + // campaign
+        // 32 + // proposer
+        // 32 + // recipient_wallet
+        // 32 + // identity hash
+        // 8 +  // amount
+        // 8 +  // yes
+        // 8 +  // no
+        // 1;   // executed
 #[error_code]
 pub enum CustomError {
     #[msg("Campaign is not active")]
@@ -308,5 +317,7 @@ pub enum CustomError {
     VoteNotPassed,
     #[msg("Invalid recipient wallet")]
     InvalidRecipient,
+    #[msg("Arithmetic overflow")]
+    ArithmeticOverflow,
 
 }
