@@ -277,3 +277,29 @@ PDA seeds = ["vote", proposal_pubkey, voter_pubkey]
 ## Câu giải thích ngắn cho slide
 > "Tiền được giữ trong Treasury PDA do smart contract quản lý.
 > Không ai có private key của ví quỹ, vì vậy tiền chỉ có thể được giải ngân khi proposal được cộng đồng thông qua."
+
+
+❝ Muốn đổi recipient → phải vote lại ❞
+
+Cách làm:
+
+recipientWallet → ví nhận tiền bị khóa on-chain
+
+recipientIdentityHash → hash CCCD / MSSV / tổ chức
+
+Off-chain chỉ xác minh danh tính
+
+On-chain chỉ tin hash
+
+👉 Không ai có thể:
+
+Đổi ví
+
+Đổi danh tính
+
+Giải ngân lén
+
+🎯 CÂU TRẢ LỜI “ĂN ĐIỂM” (GHI VÀO README)
+
+“Proposal lưu đồng thời ví nhận và hash định danh.
+Nếu muốn thay đổi người nhận, cần tạo proposal mới và được cộng đồng biểu quyết.”
