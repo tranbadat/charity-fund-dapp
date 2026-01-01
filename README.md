@@ -278,6 +278,9 @@ PDA seeds = ["vote", proposal_pubkey, voter_pubkey]
 > "Tiền được giữ trong Treasury PDA do smart contract quản lý.
 > Không ai có private key của ví quỹ, vì vậy tiền chỉ có thể được giải ngân khi proposal được cộng đồng thông qua."
 
+>“Hệ thống áp dụng mô hình danh tính hai lớp:
+>blockchain đảm bảo bất biến và minh bạch dòng tiền,
+>trong khi off-chain xử lý xác thực có kiểm soát để bảo vệ quyền riêng tư.”
 
 ❝ Muốn đổi recipient → phải vote lại ❞
 

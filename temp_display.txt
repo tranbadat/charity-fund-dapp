@@ -1,0 +1,471 @@
+1: use anchor_lang::prelude::*;
+1: use anchor_lang::prelude::*;
+3: use anchor_lang::system_program::{self};
+4: 
+5: declare_id!("6Aqi76NwBfy2W7qSHgWptjdoTYWHCig63dcCuZUZBeTn");
+4: 
+7: #[program]
+8: pub mod charity_fund {
+9:     use super::*;
+4: 
+11:     pub fn initialize_campaign(
+12:         ctx: Context<InitializeCampaign>,
+13:         target_amount: u64,
+14:         deadline: i64,
+15:     ) -> Result<()> {
+16:         let campaign = &mut ctx.accounts.campaign;
+4: 
+18:         campaign.admin = ctx.accounts.admin.key();
+19:         campaign.target_amount = target_amount;
+20:         campaign.total_donated = 0;
+21:         campaign.is_active = true;
+22:         campaign.deadline = deadline;
+23:         campaign.has_executed_proposal = false;
+4: 
+25:         let rent = Rent::get()?.minimum_balance(0);
+26:         let campaign_key = campaign.key();
+27:         let seeds = &[
+28:             b"treasury",
+29:             campaign_key.as_ref(),
+30:             &[ctx.bumps.treasury],
+31:         ];
+32:         let signer_seeds = &[&seeds[..]];
+4: 
+34:         let create_ctx = CpiContext::new_with_signer(
+35:             ctx.accounts.system_program.to_account_info(),
+36:             system_program::CreateAccount {
+37:                 from: ctx.accounts.admin.to_account_info(),
+38:                 to: ctx.accounts.treasury.to_account_info(),
+39:             },
+40:             signer_seeds,
+41:         );
+4: 
+43:         system_program::create_account(create_ctx, rent, 0, &system_program::ID)?;
+4: 
+45:         Ok(())
+46:     }
+4: 
+48:     pub fn donate(ctx: Context<Donate>, amount: u64) -> Result<()> {
+16:         let campaign = &mut ctx.accounts.campaign;
+50:         let donation = &mut ctx.accounts.donation;
+4: 
+52:         require!(campaign.is_active, CustomError::CampaignInactive);
+53:         require!(
+54:             Clock::get()?.unix_timestamp <= campaign.deadline,
+55:             CustomError::CampaignExpired
+41:         );
+4: 
+58:         if donation.amount == 0 && donation.campaign == Pubkey::default() {
+59:             donation.campaign = campaign.key();
+60:             donation.donor = ctx.accounts.donor.key();
+61:         } else {
+62:             require_keys_eq!(
+63:                 donation.campaign,
+64:                 campaign.key(),
+65:                 CustomError::InvalidDonationAccount
+66:             );
+62:             require_keys_eq!(
+68:                 donation.donor,
+69:                 ctx.accounts.donor.key(),
+65:                 CustomError::InvalidDonationAccount
+66:             );
+72:         }
+4: 
+74:         let cpi_ctx = CpiContext::new(
+35:             ctx.accounts.system_program.to_account_info(),
+76:             system_program::Transfer {
+77:                 from: ctx.accounts.donor.to_account_info(),
+38:                 to: ctx.accounts.treasury.to_account_info(),
+39:             },
+41:         );
+4: 
+82:         system_program::transfer(cpi_ctx, amount)?;
+83:         campaign.total_donated = campaign
+84:             .total_donated
+85:             .checked_add(amount)
+86:             .ok_or(CustomError::ArithmeticOverflow)?;
+87:         donation.amount = donation
+88:             .amount
+85:             .checked_add(amount)
+86:             .ok_or(CustomError::ArithmeticOverflow)?;
+4: 
+45:         Ok(())
+46:     }
+4: 
+95:     pub fn create_proposal(
+96:         ctx: Context<CreateProposal>,
+97:         recipient_wallet: Pubkey,
+98:         recipient_identity_hash: [u8; 32],
+99:         amount: u64,
+15:     ) -> Result<()> {
+101:         let proposal = &mut ctx.accounts.proposal;
+102:         let campaign = &ctx.accounts.campaign;
+4: 
+52:         require!(campaign.is_active, CustomError::CampaignInactive);
+53:         require!(
+54:             Clock::get()?.unix_timestamp <= campaign.deadline,
+55:             CustomError::CampaignExpired
+41:         );
+4: 
+110:         proposal.campaign = campaign.key();
+111:         proposal.proposer = ctx.accounts.proposer.key();
+4: 
+113:         proposal.recipient_wallet = recipient_wallet;
+114:         proposal.recipient_identity_hash = recipient_identity_hash;
+115:         proposal.amount = amount;
+4: 
+117:         proposal.yes_votes = 0;
+118:         proposal.no_votes = 0;
+119:         proposal.executed = false;
+4: 
+45:         Ok(())
+46:     }
+4: 
+124:     pub fn vote(ctx: Context<Vote>, approve: bool) -> Result<()> {
+101:         let proposal = &mut ctx.accounts.proposal;
+4: 
+127:         require!(!proposal.executed, CustomError::ProposalAlreadyExecuted);
+4: 
+129:         if approve {
+130:             proposal.yes_votes = proposal
+131:                 .yes_votes
+132:                 .checked_add(1)
+133:                 .ok_or(CustomError::ArithmeticOverflow)?;
+61:         } else {
+135:             proposal.no_votes = proposal
+136:                 .no_votes
+132:                 .checked_add(1)
+133:                 .ok_or(CustomError::ArithmeticOverflow)?;
+72:         }
+4: 
+45:         Ok(())
+46:     }
+4: 
+144:     pub fn execute_proposal(ctx: Context<ExecuteProposal>) -> Result<()> {
+101:         let proposal = &mut ctx.accounts.proposal;
+16:         let campaign = &mut ctx.accounts.campaign;
+4: 
+127:         require!(!proposal.executed, CustomError::ProposalAlreadyExecuted);
+149:         require!(!campaign.has_executed_proposal, CustomError::ProposalAlreadyExecuted);
+52:         require!(campaign.is_active, CustomError::CampaignInactive);
+53:         require!(
+54:             Clock::get()?.unix_timestamp <= campaign.deadline,
+55:             CustomError::CampaignExpired
+41:         );
+4: 
+53:         require!(
+157:             proposal.yes_votes > proposal.no_votes,
+158:             CustomError::VoteNotPassed
+41:         );
+4: 
+161:         require_keys_eq!(
+162:             ctx.accounts.recipient.key(),
+163:             proposal.recipient_wallet,
+164:             CustomError::InvalidRecipient
+41:         );
+4: 
+26:         let campaign_key = campaign.key();
+4: 
+27:         let seeds = &[
+28:             b"treasury",
+29:             campaign_key.as_ref(),
+30:             &[ctx.bumps.treasury],
+31:         ];
+4: 
+32:         let signer_seeds = &[&seeds[..]];
+4: 
+177:         let cpi_ctx = CpiContext::new_with_signer(
+35:             ctx.accounts.system_program.to_account_info(),
+179:             anchor_lang::system_program::Transfer {
+180:                 from: ctx.accounts.treasury.to_account_info(),
+181:                 to: ctx.accounts.recipient.to_account_info(),
+39:             },
+40:             signer_seeds,
+41:         );
+4: 
+186:         anchor_lang::system_program::transfer(cpi_ctx, proposal.amount)?;
+4: 
+188:         proposal.executed = true;
+189:         campaign.has_executed_proposal = true;
+190:         campaign.is_active = false;
+4: 
+45:         Ok(())
+46:     }
+4: 
+195:     pub fn refund(ctx: Context<Refund>) -> Result<()> {
+16:         let campaign = &mut ctx.accounts.campaign;
+50:         let donation = &mut ctx.accounts.donation;
+4: 
+53:         require!(
+200:             Clock::get()?.unix_timestamp > campaign.deadline,
+201:             CustomError::CampaignNotExpired
+41:         );
+149:         require!(!campaign.has_executed_proposal, CustomError::ProposalAlreadyExecuted);
+53:         require!(
+205:             donation.amount > 0,
+206:             CustomError::NoDonationToRefund
+41:         );
+161:         require_keys_eq!(
+209:             donation.campaign,
+210:             campaign.key(),
+211:             CustomError::InvalidDonationAccount
+41:         );
+161:         require_keys_eq!(
+214:             donation.donor,
+215:             ctx.accounts.donor.key(),
+211:             CustomError::InvalidDonationAccount
+41:         );
+53:         require!(
+219:             ctx.accounts.treasury.to_account_info().lamports() >= donation.amount,
+220:             CustomError::InsufficientTreasury
+41:         );
+4: 
+223:         let amount = donation.amount;
+4: 
+26:         let campaign_key = campaign.key();
+27:         let seeds = &[
+28:             b"treasury",
+29:             campaign_key.as_ref(),
+30:             &[ctx.bumps.treasury],
+31:         ];
+32:         let signer_seeds = &[&seeds[..]];
+4: 
+177:         let cpi_ctx = CpiContext::new_with_signer(
+35:             ctx.accounts.system_program.to_account_info(),
+179:             anchor_lang::system_program::Transfer {
+180:                 from: ctx.accounts.treasury.to_account_info(),
+237:                 to: ctx.accounts.donor.to_account_info(),
+39:             },
+40:             signer_seeds,
+41:         );
+4: 
+242:         anchor_lang::system_program::transfer(cpi_ctx, amount)?;
+4: 
+83:         campaign.total_donated = campaign
+84:             .total_donated
+246:             .checked_sub(amount)
+86:             .ok_or(CustomError::ArithmeticOverflow)?;
+248:         donation.amount = 0;
+4: 
+45:         Ok(())
+46:     }
+252: }
+4: 
+254: #[derive(Accounts)]
+255: pub struct InitializeCampaign<'info> {
+256:     #[account(
+257:         init,
+258:         payer = admin,
+259:         space = 8 + CampaignAccount::INIT_SPACE
+260:     )]
+261:     pub campaign: Account<'info, CampaignAccount>,
+4: 
+263:     /// CHECK: Treasury PDA ch ¯% gi ¯_ SOL
+256:     #[account(
+265:         mut,
+266:         seeds = [b"treasury", campaign.key().as_ref()],
+267:         bump
+260:     )]
+269:     pub treasury: UncheckedAccount<'info>,
+4: 
+271:     #[account(mut)]
+272:     pub admin: Signer<'info>,
+4: 
+274:     pub system_program: Program<'info, System>,
+252: }
+4: 
+254: #[derive(Accounts)]
+278: pub struct Donate<'info> {
+271:     #[account(mut)]
+261:     pub campaign: Account<'info, CampaignAccount>,
+4: 
+256:     #[account(
+283:         init_if_needed,
+284:         payer = donor,
+285:         space = 8 + DonationAccount::INIT_SPACE,
+286:         seeds = [
+287:             b"donation",
+288:             campaign.key().as_ref(),
+289:             donor.key().as_ref()
+290:         ],
+267:         bump
+260:     )]
+293:     pub donation: Account<'info, DonationAccount>,
+4: 
+295:     /// CHECK: Treasury PDA
+256:     #[account(
+265:         mut,
+266:         seeds = [b"treasury", campaign.key().as_ref()],
+267:         bump
+260:     )]
+269:     pub treasury: UncheckedAccount<'info>,
+4: 
+271:     #[account(mut)]
+304:     pub donor: Signer<'info>,
+4: 
+274:     pub system_program: Program<'info, System>,
+252: }
+4: 
+254: #[derive(Accounts)]
+310: pub struct CreateProposal<'info> {
+256:     #[account(
+257:         init,
+313:         payer = proposer,
+314:         space = 8 + ProposalAccount::INIT_SPACE,
+286:         seeds = [
+316:             b"proposal",
+288:             campaign.key().as_ref(),
+318:             proposer.key().as_ref()
+290:         ],
+267:         bump
+260:     )]
+322:     pub proposal: Account<'info, ProposalAccount>,
+4: 
+261:     pub campaign: Account<'info, CampaignAccount>,
+4: 
+271:     #[account(mut)]
+327:     pub proposer: Signer<'info>,
+4: 
+274:     pub system_program: Program<'info, System>,
+252: }
+4: 
+254: #[derive(Accounts)]
+333: pub struct Vote<'info> {
+271:     #[account(mut)]
+322:     pub proposal: Account<'info, ProposalAccount>,
+4: 
+337:     /// Vote PDA ƒ?" m ¯-i voter ch ¯% vote 1 l §n
+256:     #[account(
+257:         init,
+340:         payer = voter,
+341:         space = 8,
+286:         seeds = [
+343:             b"vote",
+344:             proposal.key().as_ref(),
+345:             voter.key().as_ref()
+290:         ],
+267:         bump
+260:     )]
+349:     pub vote_record: Account<'info, VoteAccount>,
+4: 
+271:     #[account(mut)]
+352:     pub voter: Signer<'info>,
+4: 
+274:     pub system_program: Program<'info, System>,
+252: }
+4: 
+254: #[derive(Accounts)]
+358: pub struct ExecuteProposal<'info> {
+271:     #[account(mut)]
+322:     pub proposal: Account<'info, ProposalAccount>,
+4: 
+271:     #[account(mut)]
+261:     pub campaign: Account<'info, CampaignAccount>,
+4: 
+365:     /// Treasury PDA gi ¯_ SOL (system-owned, khA'ng cA3 data)
+256:     #[account(
+265:         mut,
+266:         seeds = [b"treasury", campaign.key().as_ref()],
+267:         bump
+260:     )]
+371:     pub treasury: SystemAccount<'info>,
+4: 
+373:     /// CHECK: recipient validated against proposal.recipient
+271:     #[account(mut)]
+375:     pub recipient: UncheckedAccount<'info>,
+4: 
+377:     /// Signer that authorizes execution (provided by the client)
+378:     pub executor: Signer<'info>,
+4: 
+274:     pub system_program: Program<'info, System>,
+252: }
+4: 
+254: #[derive(Accounts)]
+384: pub struct Refund<'info> {
+271:     #[account(mut)]
+261:     pub campaign: Account<'info, CampaignAccount>,
+4: 
+256:     #[account(
+265:         mut,
+266:         seeds = [b"treasury", campaign.key().as_ref()],
+267:         bump
+260:     )]
+371:     pub treasury: SystemAccount<'info>,
+4: 
+256:     #[account(
+265:         mut,
+286:         seeds = [
+287:             b"donation",
+288:             campaign.key().as_ref(),
+289:             donor.key().as_ref()
+290:         ],
+402:         bump,
+403:         close = donor
+260:     )]
+293:     pub donation: Account<'info, DonationAccount>,
+4: 
+271:     #[account(mut)]
+304:     pub donor: Signer<'info>,
+4: 
+274:     pub system_program: Program<'info, System>,
+252: }
+4: 
+413: #[derive(InitSpace)]
+414: #[account]
+415: pub struct VoteAccount {}
+4: 
+413: #[derive(InitSpace)]
+414: #[account]
+419: pub struct CampaignAccount {
+420:     pub admin: Pubkey,
+421:     pub target_amount: u64,
+422:     pub total_donated: u64,
+423:     pub deadline: i64,
+424:     pub is_active: bool,
+425:     pub has_executed_proposal: bool,
+252: }
+4: 
+413: #[derive(InitSpace)]
+414: #[account]
+430: pub struct ProposalAccount {
+431:     pub campaign: Pubkey,
+432:     pub proposer: Pubkey,
+433:     pub recipient_wallet: Pubkey,
+434:     pub recipient_identity_hash: [u8; 32],
+435:     pub amount: u64,
+436:     pub yes_votes: u64,
+437:     pub no_votes: u64,
+438:     pub executed: bool,
+252: }
+4: 
+413: #[derive(InitSpace)]
+414: #[account]
+443: pub struct DonationAccount {
+431:     pub campaign: Pubkey,
+445:     pub donor: Pubkey,
+435:     pub amount: u64,
+252: }
+4: 
+449: #[error_code]
+450: pub enum CustomError {
+451:     #[msg("Campaign is not active")]
+452:     CampaignInactive,
+453:     #[msg("Campaign has expired")]
+454:     CampaignExpired,
+455:     #[msg("Campaign has not expired")]
+456:     CampaignNotExpired,
+457:     #[msg("Proposal already executed")]
+458:     ProposalAlreadyExecuted,
+459:     #[msg("Vote has not passed")]
+460:     VoteNotPassed,
+461:     #[msg("Invalid recipient wallet")]
+462:     InvalidRecipient,
+463:     #[msg("Arithmetic overflow")]
+464:     ArithmeticOverflow,
+465:     #[msg("No donation to refund")]
+466:     NoDonationToRefund,
+467:     #[msg("Invalid donation account")]
+468:     InvalidDonationAccount,
+469:     #[msg("Insufficient treasury funds")]
+470:     InsufficientTreasury,
+252: }
